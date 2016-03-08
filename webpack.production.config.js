@@ -18,7 +18,7 @@ module.exports = {
 
 	output: {
 		path: PATHS.build,
-		filename: 'ujdk-[hash].js',
+		filename: 'ujdk-v1.0.js',
     	hash: true
 	},
 

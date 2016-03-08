@@ -1,9 +1,9 @@
 let preferences = [
     {
-      element: '.btn',
-      type: 'span',
-      events: [ 'click', 'keyup' ],
-      name: 'user logged'
+      element: '#lp-pom-button-23',
+      type: 'a',
+      events: [ 'click' ],
+      name: 'Process started'
     },
 ]
 

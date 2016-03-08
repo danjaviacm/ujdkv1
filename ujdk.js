@@ -1,7 +1,6 @@
-import Woopra from 'woopra'
 import $ from 'jquery'
 import _ from 'underscore'
-import ujdkPreferences from './ujdkPreferences'
+// import ujdkPreferences from './ujdkPreferences'
 
 /*
  * UJDK
@@ -30,12 +29,21 @@ class UJDK {
 		if ( typeof channel === 'undefined' )
 			channel = 'SEM'
 
-		if ( typeof uj === 'undefined' )
-			uj = 'uj40'
+		if ( typeof uj === 'undefined' ) {
+
+			if ( window.location.pathname.indexOf( '/seguros-para-vehiculos/' ) != -1 ) {
+
+				let location = window.location.pathname.substring( 24 ).slice( 0, -1 )
+
+				uj = location
+			}
+
+			else
+				uj = 'uj40'
+		}
 
 		if ( typeof uid === 'undefined' )
 			uid = `user-${ Date.now() }-${ Math.floor( ( Math.random() * 100 ) + 1 ) }`
-
 
 		this._channel = channel
 		this._uj = uj
@@ -43,18 +51,28 @@ class UJDK {
 		this._is_ssl = ssl
 		this._domain = domain
 
-		this._preferences = ujdkPreferences
+		$.ajax({
+			// url: window.location.host == 'localhost:5000' ? 'http://localhost:5000/djson/ujdkPreferences.json' : 'https://seguros.comparamejor.com/seguros-para-vehiculos/uj40/djson/ujdkPreferences.json',
+			url: 'https://gist.githubusercontent.com/danjaviacm/f6ce0acdae0a681b24fd/raw/1093d1dd8be50faaa3c51e2017a898d42298be10/ujdkPreferences.json',
+			method: 'GET',
+			dataType: 'json',
+			success: ( ( data ) => {
+				sessionStorage.wpreferences = JSON.stringify( data )
+			})
+		})
+
+		this._preferences = []
 
 		this._allowed_urls = [
         	'http://example.org:8081',
         	'https://seguros.comparamejor.com',
         	'https://unbounce.com',
-        	'https://cotiza.comparamejor.com',
+        	'https://cotizar.comparamejor.com',
         	'https://comparamejor.com',
         	'http://localhost:5000'
         ]
 
-		this._woopra = new Woopra( this._domain )
+		this._woopra = woopra
 
 		this._user_basic_data = {
 			channel: this._channel,
@@ -75,12 +93,38 @@ class UJDK {
 			&& this.inIframe() == false
 			&& this.overrideWUID() == false ) {
 
-			this._woopra.identify( this._uid, {
+			let object = {
+				id: this._uid,
+				email: this._uid,
 			    channel: this._channel,
-			    uj: this._uj
-			}).push()
+			    uj: this._uj,
+				referer: document.referrer
+			}
+
+			// Catch utm_sources if exists
+			if ( this.getURLParameter( 'utm_campaign' ) && this.getURLParameter( 'utm_medium' ) && this.getURLParameter( 'utm_source' ) ) {
+				object.utm_campaign = this.getURLParameter( 'utm_campaign' )
+				object.utm_medium = this.getURLParameter( 'utm_medium' )
+				object.utm_source = this.getURLParameter( 'utm_source' )
+			}
+
+			this._woopra.identify( object )
+
+			// Remove lines from 82 to 91 if don't want to save the user into woopra in the first screen.
+			let originData = {
+				uj: this._uj,
+				channel: this._channel,
+				uid: this._uid
+			}
+
+
+			// Do magic here
+			if ( ! localStorage.wuid && localStorage.fo != 'ccm' )
+				localStorage.wuid = JSON.stringify( originData )
+
 		}
 
+		this.redirectTo()
 		this.trackAll()
 	}
 
@@ -180,7 +224,6 @@ class UJDK {
 		} catch ( e ) {
 
 			// statements
-			console.log( e )
 		}
 	}
 
@@ -192,11 +235,15 @@ class UJDK {
 	 */
 	trackAll() {
 
-		let preferences = this._preferences
+		// let preferences = this._preferences
+		let preferences = []
 
-		$( 'a, span, select, input, form, button' ).on( "click keydown keyup change", function( e ) {
+		this._woopra.track( 'pv', { url: window.location.hash.substring( 1 ) || '/consultar-placa', origin: window.location.host })
 
-			_.each( preferences, ( value ) => {
+		$( 'a, span, select, input, button, li' ).on( "click change submit", function( e ) {
+
+
+			_.each( JSON.parse( sessionStorage.wpreferences ), ( value ) => {
 
 				let isElement = false
 				let useClass = ''
@@ -217,18 +264,52 @@ class UJDK {
 				}
 
 				if ( events.indexOf( e.type ) != -1
-					&& ( ( useClass.length > 2 && value.type == e.target.localName && $( e.target ).hasClass( useClass ) ) || $( e.target ).attr( 'id' ) == useId )
-					|| ( isElement && e.target.localName == value.element ) ) {
+					&& ( ( useClass.length > 2 && value.type == e.currentTarget.localName && $( e.currentTarget ).hasClass( useClass ) ) || $( e.currentTarget ).attr( 'id' ) == useId )
+					|| ( isElement && e.currentTarget.localName == value.element ) ) {
+
+
+					if ( e.type == 'submit' ) {
+
+						// e.preventDefault()
+						let formData = {}
+
+						$( e.currentTarget ).serializeArray().map( function( x ){ formData[ x.name ] = x.value })
+
+						if ( value.fill )
+							this.overrideWUID( formData )
+					}
+
+					if ( e.type == 'click' && e.currentTarget.localName == 'button' && value.fill && e.currentTarget.type == 'submit' ) {
+
+						let formData = {}
+
+						$( e.currentTarget ).closest( 'form' ).serializeArray().map( function( x ){ formData[ x.name ] = x.value })
+
+						if ( formData.first_name && formData.last_name )
+							formData.name = `${ formData.first_name } ${ formData.last_name }`
+
+						this.overrideWUID( formData )
+
+					}
+
+					if ( e.type == 'click' && e.currentTarget.localName == 'li' && value.fill ) {
+
+						if ( window.localStorage.wuid ) {
+
+							let currentData = JSON.parse( window.localStorage.UJDATA )
+
+							this.overrideWUID( JSON.parse( currentData ) )
+						}
+					}
 
 					this.track( value.name || 'usuario logueandose', {
-						description: `el usuario ha hecho ${ e.type } en ${ e.target.textContent }`,
-						text: e.target.innerText,
-						targetElement: e.target.outerHTML
+						description: value.description || `el usuario ha hecho ${ e.type } en ${ e.currentTarget.textContent }`,
+						text: e.currentTarget.innerText,
+						targetElement: e.currentTarget.outerHTML
 					})
 				}
 
-				else
-					console.log( e.type, 'no run' )
+				// else
 
 			})
 
@@ -244,7 +325,6 @@ class UJDK {
 	    //
 	    //   	}),
 	    //   	error: (( error ) => {
-	    //   		console.log( error )
 	    //   	})
 	    // })
 
@@ -286,6 +366,47 @@ class UJDK {
 		}
 	}
 
+	/*
+     * getURLParameter
+     *
+     * get params from url
+     */
+    getURLParameter ( name ) {
+          return decodeURIComponent(( new RegExp('[?|&]' + name + '=' + '([^&;]+?)(&|#|;|$)').exec(location.search)||[,""])[1].replace(/\+/g, '%20'))||null;
+    }
+
+
+	/*
+	 * redirectTo
+	 *
+	 * redirect user according to params
+	 */
+	redirectTo () {
+
+		// According to domain change urls
+		if ( window.location.host == 'cotizar.comparamejor.com' ) {
+
+			this.openChannelTo( 'https://seguros.comparamejor.com/seguros-para-vehiculos/uj40/' )
+
+			let originData = {
+				uj: this._uj,
+				channel: this._channel,
+				uid: this._uid
+			}
+
+			$( '#lp-pom-button-23' ).on( 'click', ( e ) => {
+
+				e.preventDefault()
+
+
+				this.sendMessage( originData, 'https://seguros.comparamejor.com/seguros-para-vehiculos/uj40/' )
+
+				window.location.href = e.currentTarget.href
+
+			})
+		}
+	}
+
 
 	/*
 	 * sendMessage
@@ -321,18 +442,22 @@ class UJDK {
         	'http://example.org:8081',
         	'https://seguros.comparamejor.com',
         	'https://unbounce.com',
-        	'https://cotiza.comparamejor.com',
+        	'https://cotizar.comparamejor.com',
+        	'http://cotizar.comparamejor.com',
         	'https://comparamejor.com',
         	'http://localhost:5000'
         ]
 
 		if ( allowedURLs.indexOf( origin ) == -1 ) {
-			throw new Error( 'No tienes permisos de acceso para realizar esta acción.' )
+			throw new Error( 'No tienes permisos de acceso para realizar esta fucking acción.' )
 		}
 
+
 		// Do magic here
-		if ( ! localStorage.wuid )
+		if ( ! localStorage.wuid ) {
+			localStorage.fo = 'ccm'
 			localStorage.wuid = JSON.stringify( event.data )
+		}
 
 	}
 
@@ -341,25 +466,76 @@ class UJDK {
 	 *
 	 * override object
 	 */
-	overrideWUID () {
+	overrideWUID ( data ) {
 
 		if ( localStorage.wuid ) {
 
 			let originData = JSON.parse( localStorage.wuid )
 
+			// override object instance
 			this._uid = originData.uid
 			this._channel = originData.channel
 			this._uj = originData.uj
 
-			this._woopra.identify( this._uid, {
+			// Common object passed to woopra
+			let object = {
+				id: this._uid,
+				email: this._uid,
 			    channel: this._channel,
-			    uj: this._uj
-			}).push()
+			    uj: this._uj,
+				referer: document.referrer
+			}
+
+			// Catch utm_sources if exists
+			if ( this.getURLParameter( 'utm_campaign' ) && this.getURLParameter( 'utm_medium' ) && this.getURLParameter( 'utm_source' ) ) {
+				object.utm_campaign = this.getURLParameter( 'utm_campaign' )
+				object.utm_medium = this.getURLParameter( 'utm_medium' )
+				object.utm_source = this.getURLParameter( 'utm_source' )
+			}
+
+			// Populate user info if exists additional data
+			if ( typeof data !== 'undefined' ) {
+				object = Object.assign( data, object )
+			}
+
+			// identify the user with the new data
+			this._woopra.identify( object )
 
 			return true
 		}
 
 		else {
+
+			if ( typeof data !== 'undefined' ) {
+
+				// Common object passed to woopra
+				let object = {
+					id: this._uid,
+					email: this._uid,
+				    channel: this._channel,
+				    uj: this._uj,
+					referer: document.referrer
+				}
+
+				// Catch utm_sources if exists
+				if ( this.getURLParameter( 'utm_campaign' ) && this.getURLParameter( 'utm_medium' ) && this.getURLParameter( 'utm_source' ) ) {
+					object.utm_campaign = this.getURLParameter( 'utm_campaign' )
+					object.utm_medium = this.getURLParameter( 'utm_medium' )
+					object.utm_source = this.getURLParameter( 'utm_source' )
+				}
+
+
+				// Populate user info if exists additional data
+				if ( typeof data !== 'undefined' ) {
+					object = Object.assign( data, object )
+				}
+
+				// identify the user with the new data
+				this._woopra.identify( object )
+
+				return true
+			}
+
 			return false
 		}
 	}
